@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/helloasso/(.*)",
+      "destination": "/api/helloasso.js"
+    }
+  ]
+}
