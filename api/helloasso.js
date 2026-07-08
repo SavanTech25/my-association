@@ -32,3 +32,12 @@ module.exports = (req, res) => {
         }
     });
 };
+
+// IMPORTANT: Disable Vercel's default body parser so http-proxy-middleware can stream the raw body
+module.exports.config = {
+    api: {
+        bodyParser: false,
+        externalResolver: true,
+    },
+};
+
