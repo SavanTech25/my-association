@@ -51,7 +51,7 @@ export async function sendMemberCardEmail(member, cardBase64, receiptBase64) {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                from: `Association ABL <${process.env.REACT_APP_RESEND_FROM_EMAIL || "contact@savantech.org"}>`, 
+                from: `Association ABL <${process.env.REACT_APP_RESEND_FROM_EMAIL || "contact@resend.savantech.org"}>`,
                 to: [member.email],
                 subject: "Bienvenue à l'ABL - Votre carte de membre",
                 html: htmlContent,

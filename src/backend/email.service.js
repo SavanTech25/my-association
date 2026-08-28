@@ -23,7 +23,7 @@ export const sendEmail = async (toEmail, subject, message) => {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                from: `Association ABL <${process.env.REACT_APP_RESEND_FROM_EMAIL || "contact@savantech.org"}>`,
+                from: `Association ABL <${process.env.REACT_APP_RESEND_FROM_EMAIL || "contact@resend.savantech.org"}>`,
                 to: [toEmail],
                 subject: subject,
                 html: `<p>${message.replace(/\n/g, "<br>")}</p>`,
