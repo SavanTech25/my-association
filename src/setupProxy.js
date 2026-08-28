@@ -50,7 +50,23 @@ module.exports = function (app) {
         }
 
         try {
-            const body = req.body;
+            // Dans setupProxy, le body n'est pas toujours parsé automatiquement.
+            // On va lire le stream manuellement pour s'assurer de bien récupérer le JSON.
+            let body = req.body;
+            if (!body || Object.keys(body).length === 0) {
+                body = await new Promise((resolve, reject) => {
+                    let data = "";
+                    req.on("data", chunk => data += chunk);
+                    req.on("end", () => {
+                        try {
+                            resolve(data ? JSON.parse(data) : {});
+                        } catch (e) {
+                            reject(e);
+                        }
+                    });
+                });
+            }
+
             const response = await fetch("https://api.resend.com/emails", {
                 method: "POST",
                 headers: {
