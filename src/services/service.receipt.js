@@ -36,7 +36,6 @@ export async function generateReceiptPDF(member) {
     });
 
     const W = 210;
-    const H = 297;
 
     // Header box
     pdf.setDrawColor(0, 0, 0);
@@ -133,7 +132,6 @@ export async function generateReceiptPDF(member) {
 
     // Table Body
     const year = new Date().getFullYear();
-    const isDonation = false; 
     const amount = parseFloat(member.amount || "0");
     const amountStr = amount.toFixed(2) + " €";
 
@@ -186,7 +184,7 @@ export async function getReceiptBase64(member) {
 export async function downloadFinanceReceipt(financeData) {
     const logoB64 = await loadImageAsBase64((process.env.PUBLIC_URL || "") + "/assets/images/logo.jpg");
     const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const W = 210, H = 297;
+    const W = 210;
 
     pdf.setDrawColor(0, 0, 0); pdf.setLineWidth(0.5); pdf.rect(15, 15, W - 30, 40);
     pdf.setFont("helvetica", "bold"); pdf.setFontSize(14); pdf.text(ABL.name, W / 2, 22, { align: "center" });

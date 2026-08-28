@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { Plus, X, Video, FileText, Trash2, MessageCircle, HelpCircle, Settings } from "lucide-react";
+import { Plus, X, Video, FileText, Trash2, MessageCircle, HelpCircle, Settings, AlertTriangle } from "lucide-react";
 import { handleGetMeetings, handleScheduleMeeting, handleUpdateMeeting, handleDeleteMeeting } from "../controllers/controller.meeting";
 import { redisCommand } from "../backend/redis";
 import { toast } from "react-toastify";
+import moment from "moment";
 
 const INITIAL_FORM = {
   title: "",
@@ -22,6 +23,7 @@ export default function Secretary() {
   const [editCR, setEditCR]     = useState(null); // { id, notes }
   const [saving, setSaving]     = useState(false);
   const [form, setForm]         = useState(INITIAL_FORM);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
   
   // WhatsApp settings
   const [whatsappGroupLink, setWhatsappGroupLink] = useState("");
@@ -149,15 +151,21 @@ ${m.notes || "Aucun"}
     setSaving(false);
   };
 
-  const onDelete = async (id) => {
-    await handleDeleteMeeting(id);
+  const onDelete = (id, title) => {
+    setDeleteConfirm({ id, title });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirm) return;
+    await handleDeleteMeeting(deleteConfirm.id);
     fetchData();
+    setDeleteConfirm(null);
   };
 
   // Is the meeting upcoming ?
-  const isUpcoming = (m) => new Date(m.date) >= new Date(new Date().toDateString());
+  const isUpcoming = (m) => moment(m.date).isAfter(moment());
 
-  const upcoming = meetings.filter(isUpcoming);
+  const upcoming = meetings.filter(isUpcoming);  
   const past     = meetings.filter((m) => !isUpcoming(m));
 
   return (
@@ -432,6 +440,27 @@ ${m.notes || "Aucun"}
         </div>
       )}
 
+      {/* Confirmation Modal */}
+      {deleteConfirm && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="modal-box" style={{ maxWidth: 400, textAlign: "center", padding: "30px 24px" }}>
+            <AlertTriangle size={48} style={{ color: "var(--danger)", marginBottom: 16 }} />
+            <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-heading)", marginBottom: 10 }}>
+              Supprimer la réunion
+            </h3>
+            <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: 24, lineHeight: 1.5 }}>
+              Voulez-vous vraiment supprimer la réunion <strong>{deleteConfirm.title}</strong> ? Cette action est irréversible.
+            </p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              <button type="button" className="btn-ghost" onClick={() => setDeleteConfirm(null)}>Annuler</button>
+              <button type="button" className="btn-danger" onClick={confirmDelete}>
+                Supprimer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
@@ -444,7 +473,13 @@ function MeetingCard({ m, onCR, onDelete, past, onWhatsappShare, hasWhatsappGrou
     <div className="admin-card" style={{ opacity: past ? 0.65 : 1 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
         <div style={{ fontWeight: 700, fontSize: "1rem" }}>{m.title}</div>
-        <button className="btn-danger" style={{ marginLeft: 8, flexShrink: 0 }} onClick={() => onDelete(m.id)}>
+        <button 
+          type="button" 
+          className="btn-danger" 
+          style={{ marginLeft: 8, flexShrink: 0 }} 
+          onClick={(e) => { e.stopPropagation(); onDelete(m.id, m.title); }}
+          title="Supprimer cette réunion"
+        >
           <Trash2 size={13} />
         </button>
       </div>

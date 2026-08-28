@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useSelector } from "react-redux";
-import { Plus, Trash2, RefreshCw, UserCheck, X, CreditCard, FileText, Download, Hash, Search, Edit } from "lucide-react";
+import { Plus, Trash2, RefreshCw, UserCheck, X, CreditCard, FileText, Download, Hash, Search, Edit, AlertTriangle } from "lucide-react";
 import { handleGetMembers, handleDeleteMember, handleUpdateMember } from "../controllers/controller.member";
 import { handleCreateAdminUser } from "../controllers/controller.user";
 import { handleGetHelloAssoPayments } from "../controllers/controller.helloasso";
@@ -52,6 +52,7 @@ export default function MembersList() {
   const [roleFilter, setRoleFilter] = useState("all");
   const [editingMemberId, setEditingMemberId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
 
   useEffect(() => { fetchMembers(); }, []);
 
@@ -161,9 +162,15 @@ export default function MembersList() {
     setSavingStep("");
   };
 
-  const onDelete = async (id) => {
-    const ok = await handleDeleteMember(id);
+  const onDelete = (id, name) => {
+    setDeleteConfirm({ id, name });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirm) return;
+    const ok = await handleDeleteMember(deleteConfirm.id);
     if (ok) fetchMembers();
+    setDeleteConfirm(null);
   };
 
   const onSync = async () => {
@@ -415,9 +422,14 @@ export default function MembersList() {
                                 <Download size={13} />
                               </button>
                             )}
-                            <button className="btn-danger" onClick={() => onDelete(m.id)}>
-                              <Trash2 size={13} />
-                            </button>
+                             <button 
+                               type="button" 
+                               className="btn-danger" 
+                               onClick={(e) => { e.stopPropagation(); onDelete(m.id, `${m.firstname} ${m.lastname}`); }}
+                               title="Supprimer ce membre"
+                             >
+                               <Trash2 size={13} />
+                             </button>
                           </div>
                         </td>
                       </tr>
@@ -680,6 +692,27 @@ export default function MembersList() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {deleteConfirm && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="modal-box" style={{ maxWidth: 400, textAlign: "center", padding: "30px 24px" }}>
+            <AlertTriangle size={48} style={{ color: "var(--danger)", marginBottom: 16 }} />
+            <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-heading)", marginBottom: 10 }}>
+              Confirmation de suppression
+            </h3>
+            <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: 24, lineHeight: 1.5 }}>
+              Voulez-vous vraiment supprimer le membre <strong>{deleteConfirm.name}</strong> ? Cette action est irréversible.
+            </p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              <button type="button" className="btn-ghost" onClick={() => setDeleteConfirm(null)}>Annuler</button>
+              <button type="button" className="btn-danger" onClick={confirmDelete}>
+                Supprimer
+              </button>
+            </div>
           </div>
         </div>
       )}

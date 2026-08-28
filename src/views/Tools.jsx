@@ -2644,7 +2644,7 @@ export default function Tools() {
 
                 <div style={{
                   flex: 1, background: socialPreviewPlatform === "whatsapp" ? "#0b141a" : "#ffffff",
-                  borderRadius: 18, padding: 12, overflowY: "auto", color: "#000000",
+                  borderRadius: 18, padding: 12, overflowY: "auto", color: socialPreviewPlatform === "whatsapp" ? "#e9edef" : "#000000",
                   fontSize: "0.78rem", scrollbarWidth: "none"
                 }}>
                   {/* INSTAGRAM MOCK */}

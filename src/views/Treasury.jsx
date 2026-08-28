@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { Plus, X, TrendingUp, TrendingDown, Paperclip, FileText, Trash2 } from "lucide-react";
-import { handleGetFinances, handleAddFinance, handleGetBalance, handleDeleteFinance } from "../controllers/controller.finance";
+import { Plus, X, TrendingUp, TrendingDown, Paperclip, FileText, Trash2, CheckCircle, XCircle, AlertTriangle } from "lucide-react";
+import { handleGetFinances, handleAddFinance, handleGetBalance, handleDeleteFinance, handleAddExpenseReport, handleGetExpenseReports, handleUpdateExpenseReportStatus } from "../controllers/controller.finance";
 import { downloadFinanceReceipt } from "../services/service.receipt";
 import { toast } from "react-toastify";
+import { useSelector } from "react-redux";
 
 const INITIAL_FORM = {
   amount: "",
@@ -14,17 +15,34 @@ const INITIAL_FORM = {
   proof: null,
 };
 
+const INITIAL_EXPENSE_FORM = {
+  title: "",
+  lines: [{ label: "", amount: "" }],
+  proof: null
+};
+
 const METHOD_LABELS = {
   virement: "Virement", especes: "Espèces",
   carte: "Carte bancaire", cheque: "Chèque",
 };
 
 export default function Treasury() {
+  const user = useSelector((state) => state.userReducer?.user);
+  const role = user?.role || "membre";
+  const isAdmin = ["president", "tresorier", "secretaire"].includes(role);
+  const isTreasurer = role === "tresorier" || role === "president";
+
+  const [activeTab, setActiveTab] = useState("ledger");
+  const [expenseReports, setExpenseReports] = useState([]);
+  const [showExpenseModal, setShowExpenseModal] = useState(false);
+  const [expenseForm, setExpenseForm] = useState(INITIAL_EXPENSE_FORM);
+
   const [entries, setEntries] = useState([]);
   const [balance, setBalance] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [confirmModal, setConfirmModal] = useState(null);
   const [form, setForm] = useState(INITIAL_FORM);
   const [selectedProof, setSelectedProof] = useState(null);
   const [generateInvoice, setGenerateInvoice] = useState(false);
@@ -34,9 +52,10 @@ export default function Treasury() {
 
   const fetchData = async () => {
     setLoading(true);
-    const [data, bal] = await Promise.all([handleGetFinances(), handleGetBalance()]);
+    const [data, bal, reports] = await Promise.all([handleGetFinances(), handleGetBalance(), handleGetExpenseReports()]);
     setEntries(data);
     setBalance(bal);
+    setExpenseReports(reports);
     setLoading(false);
   };
 
@@ -90,16 +109,107 @@ export default function Treasury() {
     setSaving(false);
   };
 
-  const onDelete = async (id) => {
-    if (window.confirm("Êtes-vous sûr de vouloir supprimer cette écriture comptable ? Le solde de l'association sera recalculé automatiquement.")) {
-      setLoading(true);
-      const success = await handleDeleteFinance(id);
-      if (success) {
-        await fetchData();
-      } else {
-        setLoading(false);
+  const onDelete = (id) => {
+    setConfirmModal({
+      title: "Supprimer l'écriture comptable",
+      message: "Êtes-vous sûr de vouloir supprimer cette écriture comptable ? Le solde de l'association sera recalculé automatiquement.",
+      isDanger: true,
+      onConfirm: async () => {
+        setLoading(true);
+        const success = await handleDeleteFinance(id);
+        if (success) {
+          await fetchData();
+        } else {
+          setLoading(false);
+        }
       }
+    });
+  };
+
+  const handleExpenseLineChange = (index, field, value) => {
+    const newLines = [...expenseForm.lines];
+    newLines[index][field] = value;
+    setExpenseForm({ ...expenseForm, lines: newLines });
+  };
+
+  const addExpenseLine = () => {
+    setExpenseForm({ ...expenseForm, lines: [...expenseForm.lines, { label: "", amount: "" }] });
+  };
+
+  const removeExpenseLine = (index) => {
+    const newLines = expenseForm.lines.filter((_, i) => i !== index);
+    setExpenseForm({ ...expenseForm, lines: newLines });
+  };
+
+  const handleExpenseFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("Le fichier est trop volumineux (maximum 2 Mo).");
+      return;
     }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setExpenseForm((prev) => ({
+        ...prev,
+        proof: { name: file.name, type: file.type, data: reader.result },
+      }));
+      toast.success("Justificatif joint avec succès !");
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const onExpenseSubmit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    const validLines = expenseForm.lines.filter(l => l.label && l.amount);
+    if (validLines.length === 0) {
+      toast.error("Veuillez ajouter au moins une ligne de frais valide.");
+      setSaving(false);
+      return;
+    }
+    const totalAmount = validLines.reduce((sum, line) => sum + parseFloat(line.amount || 0), 0);
+    
+    const reportData = {
+        title: expenseForm.title,
+        lines: validLines,
+        totalAmount,
+        proof: expenseForm.proof,
+        submitter: `${user?.firstname || ""} ${user?.lastname || ""}`.trim() || user?.email,
+        date: new Date().toISOString()
+    };
+
+    const ok = await handleAddExpenseReport(reportData);
+    if (ok) {
+        setShowExpenseModal(false);
+        setExpenseForm(INITIAL_EXPENSE_FORM);
+        fetchData();
+    }
+    setSaving(false);
+  };
+
+  const onValidateExpense = (report, status) => {
+    setConfirmModal({
+      title: status === 'approved' ? "Valider la note de frais" : "Refuser la note de frais",
+      message: `Êtes-vous sûr de vouloir ${status === 'approved' ? 'valider et rembourser' : 'refuser'} cette note de frais ?`,
+      isDanger: status !== 'approved',
+      onConfirm: async () => {
+        setLoading(true);
+        const success = await handleUpdateExpenseReportStatus(report.id, status);
+        if (success && status === "approved") {
+            await handleAddFinance({
+                amount: report.totalAmount,
+                type: "expense",
+                date: new Date().toISOString().split("T")[0],
+                method: "virement",
+                motive: `Remboursement note de frais: ${report.title}`,
+                recipient: report.submitter,
+                proof: report.proof
+            });
+        }
+        await fetchData();
+      }
+    });
   };
 
   const totalIncome  = entries.filter((e) => e.type === "income").reduce((s, e) => s + (e.amount || 0), 0);
@@ -117,11 +227,39 @@ export default function Treasury() {
           <div className="section-title">Trésorerie</div>
           <div className="section-subtitle">Gestion des entrées et sorties d'argent</div>
         </div>
-        <button className="btn-primary" onClick={() => setShowModal(true)}>
-          <Plus size={16} /> Nouvelle écriture
-        </button>
+        <div>
+          {activeTab === "ledger" ? (
+            <button className="btn-primary" onClick={() => setShowModal(true)}>
+              <Plus size={16} /> Nouvelle écriture
+            </button>
+          ) : (
+            isAdmin && (
+              <button className="btn-primary" onClick={() => setShowExpenseModal(true)}>
+                <Plus size={16} /> Nouvelle note de frais
+              </button>
+            )
+          )}
+        </div>
       </div>
 
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 20, marginBottom: 28, borderBottom: '1px solid var(--border)' }}>
+          <button 
+              onClick={() => setActiveTab('ledger')}
+              style={{ background: 'none', border: 'none', padding: '10px 0', borderBottom: activeTab === 'ledger' ? '2px solid var(--primary)' : '2px solid transparent', fontWeight: activeTab === 'ledger' ? 600 : 400, color: activeTab === 'ledger' ? 'var(--primary)' : 'var(--text-muted)' }}
+          >
+              Livre des comptes
+          </button>
+          <button 
+              onClick={() => setActiveTab('expenses')}
+              style={{ background: 'none', border: 'none', padding: '10px 0', borderBottom: activeTab === 'expenses' ? '2px solid var(--primary)' : '2px solid transparent', fontWeight: activeTab === 'expenses' ? 600 : 400, color: activeTab === 'expenses' ? 'var(--primary)' : 'var(--text-muted)' }}
+          >
+              Notes de frais
+          </button>
+      </div>
+
+      {activeTab === "ledger" ? (
+        <>
       {/* Summary Cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 18, marginBottom: 28 }}>
         <div className="stat-card">
@@ -271,8 +409,86 @@ export default function Treasury() {
             </div>
           )}
         </>
-      )}
+        )}
       </div>
+      </>
+      ) : (
+        <div className="admin-card" style={{ padding: 0 }}>
+          {loading ? (
+             <div style={{ textAlign: "center", padding: "60px 0", color: "var(--text-muted)" }}>
+               <div style={{ width: 28, height: 28, border: "3px solid var(--primary)", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px" }} />
+             </div>
+          ) : (
+            <div className="admin-table-wrapper">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Soumis par</th>
+                    <th>Titre</th>
+                    <th>Montant Total</th>
+                    <th>Justificatif</th>
+                    <th>Statut</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {expenseReports.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} style={{ textAlign: "center", color: "var(--text-muted)", padding: "40px 0" }}>
+                        Aucune note de frais.
+                      </td>
+                    </tr>
+                  ) : expenseReports.map((report) => (
+                    <tr key={report.id}>
+                      <td style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                        {new Date(report.createdAt).toLocaleDateString("fr-FR")}
+                      </td>
+                      <td style={{ fontWeight: 600 }}>{report.submitter}</td>
+                      <td>
+                         <div>{report.title}</div>
+                         <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{report.lines.length} ligne(s)</div>
+                      </td>
+                      <td style={{ fontWeight: 700 }}>{report.totalAmount}€</td>
+                      <td>
+                        {report.proof ? (
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            onClick={() => setSelectedProof(report.proof)}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 8px", fontSize: "0.78rem", color: "var(--primary)" }}
+                          >
+                            <Paperclip size={13} /> Voir
+                          </button>
+                        ) : (
+                          <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>—</span>
+                        )}
+                      </td>
+                      <td>
+                        {report.status === "pending" && <span className="badge-role" style={{ background: "#fef3c7", color: "#d97706" }}>En attente</span>}
+                        {report.status === "approved" && <span className="badge-role" style={{ background: "#dcfce7", color: "#16a34a" }}>Validée</span>}
+                        {report.status === "rejected" && <span className="badge-role" style={{ background: "#fee2e2", color: "#dc2626" }}>Refusée</span>}
+                      </td>
+                      <td>
+                        {report.status === "pending" && isTreasurer && (
+                           <div style={{ display: "flex", gap: 8 }}>
+                             <button type="button" onClick={() => onValidateExpense(report, "approved")} className="btn-ghost" style={{ color: "var(--success)", padding: "6px" }} title="Valider et Rembourser">
+                               <CheckCircle size={16} />
+                             </button>
+                             <button type="button" onClick={() => onValidateExpense(report, "rejected")} className="btn-ghost" style={{ color: "var(--danger)", padding: "6px" }} title="Refuser">
+                               <XCircle size={16} />
+                             </button>
+                           </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Modal */}
       {showModal && (
@@ -373,6 +589,73 @@ export default function Treasury() {
         </div>
       )}
 
+      {/* Expense Modal */}
+      {showExpenseModal && (
+        <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setShowExpenseModal(false)}>
+          <div className="modal-box" style={{ maxWidth: 600 }}>
+            <div className="modal-header">
+              <div className="modal-title">Nouvelle Note de Frais</div>
+              <button className="modal-close" onClick={() => setShowExpenseModal(false)}><X size={16} /></button>
+            </div>
+            <form onSubmit={onExpenseSubmit}>
+              <div className="modal-body">
+                <div style={{ marginBottom: 14 }}>
+                  <label className="form-label">Titre de la note de frais *</label>
+                  <input className="form-input" placeholder="Ex: Déplacement AG" value={expenseForm.title}
+                    onChange={(e) => setExpenseForm({ ...expenseForm, title: e.target.value })} required />
+                </div>
+                
+                <div style={{ marginBottom: 14 }}>
+                  <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    Détail des frais
+                    <button type="button" onClick={addExpenseLine} style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
+                      + Ajouter une ligne
+                    </button>
+                  </label>
+                  {expenseForm.lines.map((line, index) => (
+                    <div key={index} style={{ display: 'flex', gap: 10, marginBottom: 8, alignItems: 'center' }}>
+                      <input className="form-input" placeholder="Description (ex: Billet train)" value={line.label}
+                        onChange={(e) => handleExpenseLineChange(index, 'label', e.target.value)} required style={{ flex: 1 }} />
+                      <input type="number" className="form-input" placeholder="Montant (€)" value={line.amount}
+                        onChange={(e) => handleExpenseLineChange(index, 'amount', e.target.value)} required min="0.01" step="0.01" style={{ width: 120 }} />
+                      {expenseForm.lines.length > 1 && (
+                         <button type="button" onClick={() => removeExpenseLine(index)} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '4px' }}>
+                           <Trash2 size={16} />
+                         </button>
+                      )}
+                    </div>
+                  ))}
+                  <div style={{ textAlign: 'right', fontWeight: 600, marginTop: 8, fontSize: '0.9rem', color: 'var(--primary)' }}>
+                    Total : {expenseForm.lines.reduce((s, l) => s + parseFloat(l.amount || 0), 0).toFixed(2)}€
+                  </div>
+                </div>
+
+                <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14 }}>
+                  <label className="form-label">Preuve / Justificatif *</label>
+                  <input type="file" className="form-input" accept="image/*,application/pdf" onChange={handleExpenseFileChange} required={!expenseForm.proof} />
+                  {expenseForm.proof && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(34, 197, 94, 0.08)", border: "1px solid rgba(34, 197, 94, 0.15)", borderRadius: 10, padding: "8px 12px", marginTop: 8 }}>
+                      <span style={{ fontSize: "0.8rem", color: "#22c55e", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                        <Paperclip size={14} /> {expenseForm.proof.name}
+                      </span>
+                      <button type="button" onClick={() => setExpenseForm({...expenseForm, proof: null})} style={{ background: "none", border: "none", color: "var(--danger)", cursor: "pointer", padding: 0 }}>
+                        <X size={15} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn-ghost" onClick={() => setShowExpenseModal(false)}>Annuler</button>
+                <button type="submit" className="btn-primary" disabled={saving}>
+                  {saving ? "Soumission…" : "Soumettre la note"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Selected Proof Preview Modal */}
       {selectedProof && (
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setSelectedProof(null)}>
@@ -403,6 +686,27 @@ export default function Treasury() {
               <a href={selectedProof.data} download={selectedProof.name} className="btn-ghost" style={{ display: "inline-flex", textDecoration: "none", alignItems: "center", gap: 6 }}>
                 Télécharger le document
               </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {confirmModal && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="modal-box" style={{ maxWidth: 400, textAlign: "center", padding: "30px 24px" }}>
+            <AlertTriangle size={48} style={{ color: confirmModal.isDanger ? "var(--danger)" : "var(--warning)", marginBottom: 16 }} />
+            <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-heading)", marginBottom: 10 }}>
+              {confirmModal.title}
+            </h3>
+            <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: 24, lineHeight: 1.5 }}>
+              {confirmModal.message}
+            </p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              <button type="button" className="btn-ghost" onClick={() => setConfirmModal(null)}>Annuler</button>
+              <button type="button" className={confirmModal.isDanger ? "btn-danger" : "btn-primary"} onClick={() => { confirmModal.onConfirm(); setConfirmModal(null); }}>
+                Confirmer
+              </button>
             </div>
           </div>
         </div>

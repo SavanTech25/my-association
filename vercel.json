@@ -3,6 +3,10 @@
     {
       "source": "/api/helloasso/(.*)",
       "destination": "/api/helloasso.js"
+    },
+    {
+      "source": "/api/send-email",
+      "destination": "/api/send-email.js"
     }
   ]
 }
