@@ -89,15 +89,12 @@ export async function handleUpdateMeeting(id, updatedData) {
  * @returns {Promise<boolean>} Success status
  */
 export async function handleDeleteMeeting(id) {
-    if (window.confirm("Voulez-vous supprimer cette réunion ?")) {
-        try {
-            await deleteMeeting(id);
-            toast.success("Réunion supprimée");
-            return true;
-        } catch (error) {
-            toast.error("Erreur de suppression");
-            return false;
-        }
+    try {
+        await deleteMeeting(id);
+        toast.success("Réunion supprimée");
+        return true;
+    } catch (error) {
+        toast.error("Erreur de suppression");
+        return false;
     }
-    return false;
 }

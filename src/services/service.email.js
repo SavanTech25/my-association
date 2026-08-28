@@ -1,4 +1,5 @@
-// Removed EmailJS import, now using Resend API via fetch
+// Resend emails are sent through the /resend-api dev-proxy (setupProxy.js)
+// to avoid CORS — the API key is injected server-side, never sent to the browser.
 
 /**
  * Sends a welcome email to a new member using Resend.
@@ -9,13 +10,6 @@
  * @returns {Promise<boolean>}
  */
 export async function sendMemberCardEmail(member, cardBase64, receiptBase64) {
-    const RESEND_API_KEY = process.env.REACT_APP_RESEND_API_KEY;
-    
-    if (!RESEND_API_KEY) {
-        console.warn("Resend not configured — check your .env variables (REACT_APP_RESEND_API_KEY).");
-        return false;
-    }
-
     if (!member?.email) {
         console.warn("No email address for member, skipping email.");
         return false;
@@ -51,10 +45,9 @@ export async function sendMemberCardEmail(member, cardBase64, receiptBase64) {
     }
 
     try {
-        const response = await fetch("https://api.resend.com/emails", {
+        const response = await fetch("/api/send-email", {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${RESEND_API_KEY}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Calendar, Users, Image as ImageIcon, Trash2, X, ChevronLeft, ChevronRight, Info } from "lucide-react";
+import { Plus, Calendar, Users, Image as ImageIcon, Trash2, X, ChevronLeft, ChevronRight, Info, AlertTriangle } from "lucide-react";
 import { toast } from "react-toastify";
 
 export default function Events() {
@@ -9,6 +9,7 @@ export default function Events() {
   });
   
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const [newEvent, setNewEvent] = useState({
     title: "",
     date: "",
@@ -70,10 +71,14 @@ export default function Events() {
   };
 
   const handleDelete = (id) => {
-    if (window.confirm("Voulez-vous vraiment supprimer cet événement ?")) {
-      setEvents(events.filter(ev => ev.id !== id));
-      toast.info("Événement supprimé.");
-    }
+    setDeleteConfirmId(id);
+  };
+
+  const confirmDelete = () => {
+    if (!deleteConfirmId) return;
+    setEvents(events.filter(ev => ev.id !== deleteConfirmId));
+    toast.info("Événement supprimé.");
+    setDeleteConfirmId(null);
   };
 
   return (
@@ -188,6 +193,27 @@ export default function Events() {
                 <button type="submit" className="btn-primary">Enregistrer l'événement</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Deletion Confirmation Modal */}
+      {deleteConfirmId && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="modal-box" style={{ maxWidth: 400, textAlign: "center", padding: "30px 24px" }}>
+            <AlertTriangle size={48} style={{ color: "var(--danger)", marginBottom: 16 }} />
+            <h3 style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-heading)", marginBottom: 10 }}>
+              Supprimer l'événement
+            </h3>
+            <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: 24, lineHeight: 1.5 }}>
+              Voulez-vous vraiment supprimer cet événement ? Cette action est définitive.
+            </p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              <button type="button" className="btn-ghost" onClick={() => setDeleteConfirmId(null)}>Annuler</button>
+              <button type="button" className="btn-danger" onClick={confirmDelete}>
+                Supprimer
+              </button>
+            </div>
           </div>
         </div>
       )}

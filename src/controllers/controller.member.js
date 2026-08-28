@@ -58,15 +58,12 @@ export async function handleUpdateMember(id, updatedData) {
  * @returns {Promise<boolean>} Success status
  */
 export async function handleDeleteMember(id) {
-    if (window.confirm("Voulez-vous vraiment supprimer ce membre ?")) {
-        try {
-            await deleteMember(id);
-            toast.success("Membre supprimé");
-            return true;
-        } catch (error) {
-            toast.error("Erreur lors de la suppression");
-            return false;
-        }
+    try {
+        await deleteMember(id);
+        toast.success("Membre supprimé");
+        return true;
+    } catch (error) {
+        toast.error("Erreur lors de la suppression");
+        return false;
     }
-    return false;
 }

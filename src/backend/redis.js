@@ -23,7 +23,7 @@ function parseRedisUrl(urlStr) {
  * @param {Array} command - e.g. ["SET", "key", "val"]
  */
 export async function redisCommand(command) {
-    const rawUrl = process.env.REACT_APP_REDIS_URL || "rediss://default:gQAAAAAAAfK6AAIgcDE4MmQ3MDE1ZDIwMzU0MTZmYTY1MjI0NzE0Y2IyODE3Nw@crucial-trout-127674.upstash.io:6379";
+    const rawUrl = process.env.REACT_APP_REDIS_URL || "rediss://default:gQAAAAAAAex9AAIgcDJkODA1Nzg2MGZiNmU0ZmY2OTI3N2EyOGVjYjBiYmY4ZA@unified-monkey-126077.upstash.io:6379";
     let url = "";
     let token = "";
     

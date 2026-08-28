@@ -130,47 +130,6 @@ export default function HelloAssoCampaigns() {
           });
         }
 
-        // 4. Double check per-campaign payments via direct endpoints (Fallback)
-        await Promise.all(
-          mapped.map(async (campaign) => {
-            try {
-              const rawPayments = await handleGetHelloAssoFormPayments(
-                ORG_SLUG,
-                campaign.formType,
-                campaign.formSlug || campaign.slug
-              );
-
-              if (rawPayments && rawPayments.length > 0) {
-                rawPayments.forEach(p => {
-                  const isSucceeded = p.state === "Processed" || p.state === "Authorized" || p.state === "Registered";
-                  if (isSucceeded) {
-                    const amount = (p.amount || 0) / 100;
-                    
-                    const alreadyAdded = campaign.payers.some(payer => 
-                      payer.email === p.payer?.email && 
-                      payer.amount === amount
-                    );
-
-                    if (!alreadyAdded) {
-                      campaign.collected += amount;
-                      campaign.paymentsCount += 1;
-                      campaign.payers.push({
-                        name: p.payer ? `${p.payer.firstName || ""} ${p.payer.lastName || ""}`.trim() : "Participant",
-                        email: p.payer?.email || "—",
-                        date: p.date || p.createdAt,
-                        amount: amount,
-                        status: p.state || "Processed"
-                      });
-                    }
-                  }
-                });
-              }
-            } catch (err) {
-              console.error(`Error loading Fallback payments for campaign ${campaign.formSlug || campaign.slug}:`, err);
-            }
-          })
-        );
-
         setCampaigns(mapped);
         setIsDemoMode(false);
       } else {
@@ -274,25 +233,56 @@ export default function HelloAssoCampaigns() {
     setLoadingPayers(true);
     setPayerPage(1);
 
-    if (isDemoMode || (campaign.payers && campaign.payers.length > 0)) {
-      // Load pre-aggregated payments instantly
+    if (isDemoMode) {
       setActivePayers(campaign.payers || []);
-    } else {
-      // Fetch fallback list of payments if empty
-      try {
-        const rawPayments = await handleGetHelloAssoFormPayments(ORG_SLUG, campaign.formType, campaign.formSlug);
-        const mappedPayers = rawPayments.map(p => ({
-          name: p.payer ? `${p.payer.firstName || ""} ${p.payer.lastName || ""}`.trim() : "Participant",
-          email: p.payer?.email || "—",
-          date: p.date || p.createdAt,
-          amount: (p.amount || 0) / 100,
-          status: p.state || "Processed"
-        }));
-        setActivePayers(mappedPayers);
-      } catch (err) {
-        toast.error("Impossible de charger les participants pour cette campagne.");
-        setActivePayers([]);
-      }
+      setLoadingPayers(false);
+      return;
+    }
+
+    try {
+      const rawPayments = await handleGetHelloAssoFormPayments(
+        ORG_SLUG,
+        campaign.formType,
+        campaign.formSlug || campaign.slug
+      );
+      
+      const mappedPayers = (rawPayments || []).map(p => ({
+        name: p.payer ? `${p.payer.firstName || ""} ${p.payer.lastName || ""}`.trim() : "Participant",
+        email: p.payer?.email || "—",
+        date: p.date || p.createdAt,
+        amount: (p.amount || 0) / 100,
+        status: p.state || "Processed"
+      }));
+      
+      setActivePayers(mappedPayers);
+      
+      // Update campaigns list totals & payers dynamically
+      const updatedCampaigns = campaigns.map(c => {
+        if (c.id === campaign.id || c.slug === campaign.slug || c.formSlug === campaign.formSlug) {
+          const collected = mappedPayers.reduce((s, p) => s + p.amount, 0);
+          return {
+            ...c,
+            payers: mappedPayers,
+            collected: collected,
+            paymentsCount: mappedPayers.length
+          };
+        }
+        return c;
+      });
+      setCampaigns(updatedCampaigns);
+      
+      // Update active campaign with accurate info
+      setActiveCampaign(prev => prev ? {
+        ...prev,
+        payers: mappedPayers,
+        collected: mappedPayers.reduce((s, p) => s + p.amount, 0),
+        paymentsCount: mappedPayers.length
+      } : null);
+
+    } catch (err) {
+      console.error(err);
+      toast.error("Impossible de charger les participants pour cette campagne.");
+      setActivePayers(campaign.payers || []);
     }
     setLoadingPayers(false);
   };

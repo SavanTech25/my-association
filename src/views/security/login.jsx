@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { handleLogin } from "../../controllers/controller.user";
 import { useDispatch } from "react-redux";
-import { Mail, Lock, LogIn, Github, Chrome } from "lucide-react";
+import { Mail, Lock, LogIn } from "lucide-react";
 import { toast } from "react-toastify";
 
 export default function Login() {

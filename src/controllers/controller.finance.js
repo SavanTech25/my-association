@@ -3,7 +3,10 @@ import {
     addFinanceEntry, 
     getAllFinanceEntries, 
     getCurrentBalance,
-    deleteFinanceEntry
+    deleteFinanceEntry,
+    addExpenseReport,
+    getAllExpenseReports,
+    updateExpenseReportStatus
 } from "../backend/finance.service";
 
 /**
@@ -61,6 +64,46 @@ export async function handleDeleteFinance(id) {
         throw new Error("Introuvable");
     } catch (error) {
         toast.error("Erreur lors de la suppression de l'écriture");
+        return false;
+    }
+}
+
+/**
+ * Handles adding a new expense report
+ */
+export async function handleAddExpenseReport(reportData) {
+    try {
+        await addExpenseReport(reportData);
+        toast.success("Note de frais soumise pour validation");
+        return true;
+    } catch (error) {
+        toast.error("Erreur d'enregistrement de la note de frais");
+        return false;
+    }
+}
+
+/**
+ * Fetches all expense reports
+ */
+export async function handleGetExpenseReports() {
+    try {
+        return await getAllExpenseReports();
+    } catch (error) {
+        toast.error("Erreur de récupération des notes de frais");
+        return [];
+    }
+}
+
+/**
+ * Handles updating an expense report status
+ */
+export async function handleUpdateExpenseReportStatus(id, status) {
+    try {
+        await updateExpenseReportStatus(id, status);
+        toast.success(`Note de frais ${status === 'approved' ? 'validée' : 'refusée'}`);
+        return true;
+    } catch (error) {
+        toast.error("Erreur lors de la mise à jour");
         return false;
     }
 }

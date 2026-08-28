@@ -2,6 +2,7 @@ import { redisCommand, generateUUID } from "./redis";
 
 const BALANCE_KEY = "meta:balance";
 const FINANCES_IDS_KEY = "finances:ids";
+const EXPENSE_REPORTS_IDS_KEY = "expense-reports:ids";
 
 /**
  * Adds a new financial entry.
@@ -114,6 +115,68 @@ export const deleteFinanceEntry = async (id) => {
         return true;
     } catch (error) {
         console.error("Error deleting finance entry:", error);
+    }
+};
+
+/**
+ * Adds a new expense report (Note de frais)
+ */
+export const addExpenseReport = async (reportData) => {
+    try {
+        const id = generateUUID();
+        const dataToSave = {
+            ...reportData,
+            id,
+            status: "pending",
+            createdAt: new Date().toISOString(),
+        };
+        await redisCommand(["SET", `expense-report:${id}`, JSON.stringify(dataToSave)]);
+        await redisCommand(["SADD", EXPENSE_REPORTS_IDS_KEY, id]);
+        return id;
+    } catch (error) {
+        console.error("Error adding expense report:", error);
+        throw error;
+    }
+};
+
+/**
+ * Fetches all expense reports
+ */
+export const getAllExpenseReports = async () => {
+    try {
+        const ids = await redisCommand(["SMEMBERS", EXPENSE_REPORTS_IDS_KEY]);
+        if (!ids || ids.length === 0) return [];
+        
+        const keys = ids.map(id => `expense-report:${id}`);
+        const entriesData = await redisCommand(["MGET", ...keys]);
+        
+        const entries = entriesData
+            .filter(Boolean)
+            .map(dataStr => JSON.parse(dataStr));
+            
+        return entries.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    } catch (error) {
+        console.error("Error getting expense reports:", error);
+        return [];
+    }
+};
+
+/**
+ * Updates an expense report status
+ */
+export const updateExpenseReportStatus = async (id, status) => {
+    try {
+        const entryStr = await redisCommand(["GET", `expense-report:${id}`]);
+        if (!entryStr) return false;
+        
+        const entry = JSON.parse(entryStr);
+        entry.status = status;
+        entry.updatedAt = new Date().toISOString();
+        
+        await redisCommand(["SET", `expense-report:${id}`, JSON.stringify(entry)]);
+        return entry;
+    } catch (error) {
+        console.error("Error updating expense report status:", error);
         throw error;
     }
 };
