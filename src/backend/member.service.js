@@ -203,6 +203,32 @@ export const deleteMember = async (id) => {
 };
 
 /**
+ * Updates only the joinDate of a member (used for re-inscriptions).
+ * @param {string} id - Member ID
+ * @param {string} newJoinDate - ISO date string
+ * @returns {Promise<Object>} Updated member object
+ */
+export const updateMemberJoinDate = async (id, newJoinDate) => {
+    try {
+        const existingMember = await getMemberById(id);
+        if (!existingMember) {
+            throw new Error(`Member with ID ${id} not found`);
+        }
+        const dataToSave = {
+            ...existingMember,
+            joinDate: newJoinDate,
+            lastReinscriptionAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+        };
+        await redisCommand(["SET", `member:${id}`, JSON.stringify(dataToSave)]);
+        return dataToSave;
+    } catch (error) {
+        console.error("Error updating member joinDate:", error);
+        throw error;
+    }
+};
+
+/**
  * Gets members by role
  */
 export const getMembersByRole = async (role) => {
