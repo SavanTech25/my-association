@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { useSelector } from "react-redux";
-import { Plus, Trash2, RefreshCw, UserCheck, X, CreditCard, FileText, Download, Hash, Search, Edit, AlertTriangle } from "lucide-react";
+import { Plus, Trash2, RefreshCw, RefreshCcw, UserCheck, X, CreditCard, FileText, Download, Hash, Search, Edit, AlertTriangle, Mail } from "lucide-react";
 import { handleGetMembers, handleDeleteMember, handleUpdateMember } from "../controllers/controller.member";
 import { handleCreateAdminUser } from "../controllers/controller.user";
 import { handleGetHelloAssoPayments } from "../controllers/controller.helloasso";
-import { addMemberWithNumber } from "../backend/member.service";
+import { addMemberWithNumber, updateMemberJoinDate } from "../backend/member.service";
 import { downloadMemberCard, getMemberCardBase64 } from "../services/service.memberCard";
 import { downloadReceipt, getReceiptBase64 } from "../services/service.receipt";
 import { sendMemberCardEmail } from "../services/service.email";
@@ -53,6 +53,7 @@ export default function MembersList() {
   const [editingMemberId, setEditingMemberId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [reinscribingId, setReinscribingId] = useState(null);
 
   useEffect(() => { fetchMembers(); }, []);
 
@@ -178,6 +179,36 @@ export default function MembersList() {
     const slug = process.env.REACT_APP_HELLOASSO_ORGANIZATION_SLUG;
     if (slug) await handleGetHelloAssoPayments(slug);
     setSyncing(false);
+  };
+
+  /**
+   * Re-inscribes a member: updates joinDate to today, generates new card+receipt, sends renewal email.
+   */
+  const handleReinscribeMember = async (member) => {
+    if (!window.confirm(`Réinscrire ${member.firstname} ${member.lastname} ? Sa date d'adhésion sera mise à aujourd'hui et un email de renouvellement lui sera envoyé.`)) return;
+    setReinscribingId(member.id);
+    try {
+      const newJoinDate = new Date().toISOString();
+      const updatedMember = await updateMemberJoinDate(member.id, newJoinDate);
+      toast.success(`Réinscription de ${member.firstname} ${member.lastname} enregistrée.`);
+      // Generate card + receipt
+      const [cardB64, recuB64] = await Promise.all([
+        getMemberCardBase64(updatedMember),
+        getReceiptBase64(updatedMember),
+      ]);
+      // Send renewal email
+      const sent = await sendMemberCardEmail(updatedMember, cardB64, recuB64, true);
+      if (sent) {
+        toast.success(`Email de renouvellement envoyé à ${updatedMember.email}.`);
+      } else {
+        toast.warning("Carte générée, mais l'email n'a pas pu être envoyé.");
+      }
+      await fetchMembers();
+    } catch (err) {
+      console.error("Reinscription error:", err);
+      toast.error("Erreur lors de la réinscription.");
+    }
+    setReinscribingId(null);
   };
 
   const needsPassword = !editingMemberId && ADMIN_ROLES.includes(form.role);
@@ -411,7 +442,7 @@ export default function MembersList() {
                             >
                               <Edit size={13} />
                             </button>
-                            {/* Download card button if member has a number */}
+                            {/* Download card */}
                             {m.memberNumber && (
                               <button
                                 className="btn-ghost"
@@ -422,17 +453,33 @@ export default function MembersList() {
                                 <Download size={13} />
                               </button>
                             )}
-                             <button 
-                               type="button" 
-                               className="btn-danger" 
-                               onClick={(e) => { e.stopPropagation(); onDelete(m.id, `${m.firstname} ${m.lastname}`); }}
-                               title="Supprimer ce membre"
-                             >
-                               <Trash2 size={13} />
-                             </button>
+                            {/* Réinscrire — met à jour la joinDate + envoie email de renouvellement */}
+                            {m.memberNumber && m.role === "membre" && (
+                              <button
+                                className="btn-ghost"
+                                style={{ padding: "4px 8px", color: "var(--warning, #f59e0b)" }}
+                                title="Réinscrire ce membre (renouveler l'adhésion + email)"
+                                onClick={() => handleReinscribeMember(m)}
+                                disabled={reinscribingId === m.id}
+                              >
+                                <RefreshCcw
+                                  size={13}
+                                  style={{ animation: reinscribingId === m.id ? "spin 0.8s linear infinite" : "none" }}
+                                />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="btn-danger"
+                              onClick={(e) => { e.stopPropagation(); onDelete(m.id, `${m.firstname} ${m.lastname}`); }}
+                              title="Supprimer ce membre"
+                            >
+                              <Trash2 size={13} />
+                            </button>
                           </div>
                         </td>
                       </tr>
+
                     );
                   })}
                 </tbody>

@@ -3,6 +3,27 @@ import { redisCommand, generateUUID } from "./redis";
 const BALANCE_KEY = "meta:balance";
 const FINANCES_IDS_KEY = "finances:ids";
 const EXPENSE_REPORTS_IDS_KEY = "expense-reports:ids";
+const LAST_IMPORT_KEY = "meta:last_import_at";
+
+/**
+ * Saves the current timestamp as the last HelloAsso import date.
+ * @returns {Promise<void>}
+ */
+export const setLastImportDate = async () => {
+    await redisCommand(["SET", LAST_IMPORT_KEY, new Date().toISOString()]);
+};
+
+/**
+ * Retrieves the last HelloAsso import date.
+ * @returns {Promise<string|null>} ISO date string or null
+ */
+export const getLastImportDate = async () => {
+    try {
+        return await redisCommand(["GET", LAST_IMPORT_KEY]);
+    } catch {
+        return null;
+    }
+};
 
 /**
  * Adds a new financial entry.

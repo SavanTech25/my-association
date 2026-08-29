@@ -1,15 +1,20 @@
 import React, { useEffect, useState } from "react";
-import { 
-  Calendar, Users, Euro, Search, RefreshCw, X, 
-  CalendarDays, ChevronRight, HelpCircle, UserCheck
+import {
+  Calendar, Users, Euro, Search, RefreshCw, X,
+  CalendarDays, ChevronRight, HelpCircle, UserCheck,
+  Mail, Filter, Clock
 } from "lucide-react";
-import { 
-  handleGetAllHelloAssoForms, 
+import {
+  handleGetAllHelloAssoForms,
   handleGetHelloAssoFormPayments,
   handleGetHelloAssoPayments
 } from "../controllers/controller.helloasso";
 import { handleGetMembers } from "../controllers/controller.member";
-import { addMemberWithNumber } from "../backend/member.service";
+import { addMemberWithNumber, updateMemberJoinDate } from "../backend/member.service";
+import { setLastImportDate, getLastImportDate } from "../backend/finance.service";
+import { getMemberCardBase64 } from "../services/service.memberCard";
+import { getReceiptBase64 } from "../services/service.receipt";
+import { sendMemberCardEmail } from "../services/service.email";
 import { toast } from "react-toastify";
 
 const ORG_SLUG = process.env.REACT_APP_HELLOASSO_ORGANIZATION_SLUG || "abl";
@@ -40,7 +45,8 @@ export default function HelloAssoCampaigns() {
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [globalStats, setGlobalStats] = useState({ collected: 0, paymentsCount: 0 });
-  
+  const [lastImportDate, setLastImportDate_state] = useState(null);
+
   // Detail Modal state
   const [activeCampaign, setActiveCampaign] = useState(null);
   const [activePayers, setActivePayers] = useState([]);
@@ -49,8 +55,15 @@ export default function HelloAssoCampaigns() {
   const [campaignPage, setCampaignPage] = useState(1);
   const [payerPage, setPayerPage] = useState(1);
 
+  // "Envoyer à tous" state
+  const [sendingEmails, setSendingEmails] = useState(false);
+  const [sendProgress, setSendProgress] = useState({ done: 0, total: 0 });
+  // Date filter: only send to payers who paid AFTER this date (avoids duplicate emails)
+  const [emailFilterDate, setEmailFilterDate] = useState("");
+
   useEffect(() => {
     fetchData();
+    getLastImportDate().then(d => setLastImportDate_state(d));
   }, []);
 
   const fetchData = async () => {
@@ -144,81 +157,170 @@ export default function HelloAssoCampaigns() {
     setLoading(false);
   };
 
+  /** Checks if a member's cotisation is expired (joinDate + 1 year < today) */
+  const isCotisationExpired = (joinDateStr) => {
+    if (!joinDateStr) return true;
+    const expiry = new Date(joinDateStr);
+    expiry.setFullYear(expiry.getFullYear() + 1);
+    return new Date() > expiry;
+  };
+
   const handleImportPayersAsMembers = async (campaign) => {
     const payersToImport = activePayers && activePayers.length > 0 ? activePayers : campaign.payers;
     if (!payersToImport || payersToImport.length === 0) {
       toast.warning("Aucun participant à importer sur cette campagne.");
       return;
     }
-
-    if (!window.confirm(`Voulez-vous vraiment importer les ${payersToImport.length} participants comme membres de l'association ?`)) {
+    if (!window.confirm(`Voulez-vous vraiment intégrer les ${payersToImport.length} participants ? Les nouveaux seront créés, les réinscrits mis à jour. Des emails seront envoyés.`)) {
       return;
     }
 
     setImportingMembers(true);
+    let importedCount = 0;
+    let reinscribedCount = 0;
+    let skippedCount = 0;
+
     try {
-      // 1. Fetch current members to check for duplicates by email
+      // 1. Fetch current members indexed by email
       const existingMembers = await handleGetMembers();
-      const existingEmails = new Set(
-        existingMembers
-          .filter(m => m.email)
-          .map(m => m.email.toLowerCase().trim())
-      );
+      const memberByEmail = {};
+      existingMembers.forEach(m => {
+        if (m.email) memberByEmail[m.email.toLowerCase().trim()] = m;
+      });
 
-      let importedCount = 0;
-      let skippedCount = 0;
-
-      // 2. Iterate through each payer and import if they don't exist
       for (const payer of payersToImport) {
-        if (!payer.email || payer.email === "—") {
-          skippedCount++;
-          continue;
-        }
-
+        if (!payer.email || payer.email === "—") { skippedCount++; continue; }
         const emailClean = payer.email.toLowerCase().trim();
-        if (existingEmails.has(emailClean)) {
-          skippedCount++;
-          continue;
+        const payerJoinDate = payer.date || new Date().toISOString();
+
+        if (memberByEmail[emailClean]) {
+          // ── Existing member ──────────────────────────────────────────────
+          const existingMember = memberByEmail[emailClean];
+          if (!isCotisationExpired(existingMember.joinDate)) {
+            // Already active → skip
+            skippedCount++;
+            continue;
+          }
+          // Cotisation expired → reinscription
+          const updatedMember = await updateMemberJoinDate(existingMember.id, payerJoinDate);
+          // Generate card + receipt, then send renewal email
+          try {
+            const [cardB64, recuB64] = await Promise.all([
+              getMemberCardBase64(updatedMember),
+              getReceiptBase64(updatedMember),
+            ]);
+            await sendMemberCardEmail(updatedMember, cardB64, recuB64, true);
+          } catch (emailErr) {
+            console.warn("Email reinscription failed for", emailClean, emailErr);
+          }
+          reinscribedCount++;
+        } else {
+          // ── New member ───────────────────────────────────────────────────
+          const nameParts = payer.name.split(" ");
+          const newMember = {
+            firstname: nameParts[0] || "Participant",
+            lastname: nameParts.slice(1).join(" ") || "HelloAsso",
+            email: emailClean,
+            phone: "—",
+            role: "membre",
+            status: "active",
+            joinDate: payerJoinDate,
+            isSubscribed: true,
+            amount: payer.amount ? String(payer.amount) : "0",
+            paymentMethod: "helloasso",
+          };
+          const createdMember = await addMemberWithNumber(newMember);
+          memberByEmail[emailClean] = createdMember;
+          // Generate card + receipt, then send welcome email
+          try {
+            const [cardB64, recuB64] = await Promise.all([
+              getMemberCardBase64(createdMember),
+              getReceiptBase64(createdMember),
+            ]);
+            await sendMemberCardEmail(createdMember, cardB64, recuB64, false);
+          } catch (emailErr) {
+            console.warn("Email welcome failed for", emailClean, emailErr);
+          }
+          importedCount++;
         }
-
-        // Parse name into firstName & lastName
-        const nameParts = payer.name.split(" ");
-        const firstName = nameParts[0] || "Participant";
-        const lastName = nameParts.slice(1).join(" ") || "HelloAsso";
-
-        // Construct new member
-        const newMember = {
-          firstname: firstName,
-          lastname: lastName,
-          email: emailClean,
-          phone: "—",
-          role: "membre",
-          status: "active",
-          joinDate: payer.date || new Date().toISOString(),
-          isSubscribed: true,
-        };
-
-        // Add to Redis
-        await addMemberWithNumber(newMember);
-        
-        // Add to local set to avoid duplicates within the loop
-        existingEmails.add(emailClean);
-        importedCount++;
       }
 
-      if (importedCount > 0) {
-        toast.success(`${importedCount} nouveaux membres ont été importés avec succès !`);
-        if (skippedCount > 0) {
-          toast.info(`${skippedCount} participants ont été ignorés car ils sont déjà enregistrés.`);
-        }
-      } else {
-        toast.info("Tous les participants de cette campagne sont déjà enregistrés comme membres.");
-      }
+      // Save last import timestamp
+      await setLastImportDate();
+      const newDate = new Date().toISOString();
+      setLastImportDate_state(newDate);
+
+      const parts = [];
+      if (importedCount > 0) parts.push(`${importedCount} nouveau(x) membre(s) créé(s)`);
+      if (reinscribedCount > 0) parts.push(`${reinscribedCount} réinscription(s)`);
+      if (skippedCount > 0) parts.push(`${skippedCount} ignoré(s) (déjà à jour)`);
+      toast.success(parts.join(" · ") || "Aucune modification nécessaire.");
     } catch (error) {
       console.error("Error importing members from campaign:", error);
       toast.error("Une erreur est survenue lors de l'intégration des membres.");
     }
     setImportingMembers(false);
+  };
+
+  /**
+   * Sends card + receipt emails to payers who paid AFTER emailFilterDate.
+   * Prevents re-sending to people who already received the email.
+   */
+  const handleSendEmailsToAll = async () => {
+    const payers = activePayers;
+    if (!payers || payers.length === 0) {
+      toast.warning("Aucun payeur dans cette campagne.");
+      return;
+    }
+
+    // Apply date filter: only payers with date > emailFilterDate
+    const filterCutoff = emailFilterDate ? new Date(emailFilterDate) : null;
+    const filteredPayers = filterCutoff
+      ? payers.filter(p => p.date && new Date(p.date) > filterCutoff)
+      : payers;
+
+    if (filteredPayers.length === 0) {
+      toast.info("Aucun payeur ne correspond au filtre de date sélectionné.");
+      return;
+    }
+
+    if (!window.confirm(`Envoyer carte + reçu à ${filteredPayers.length} payeur(s) ?\n${filterCutoff ? `(Filtre : paiements après le ${filterCutoff.toLocaleDateString("fr-FR")})` : "Tous les payeurs"}`)) return;
+
+    setSendingEmails(true);
+    setSendProgress({ done: 0, total: filteredPayers.length });
+
+    // Fetch existing members indexed by email to get their memberNumber etc.
+    const existingMembers = await handleGetMembers();
+    const memberByEmail = {};
+    existingMembers.forEach(m => { if (m.email) memberByEmail[m.email.toLowerCase().trim()] = m; });
+
+    let sentCount = 0;
+    let errorCount = 0;
+
+    for (let i = 0; i < filteredPayers.length; i++) {
+      const payer = filteredPayers[i];
+      setSendProgress({ done: i, total: filteredPayers.length });
+
+      if (!payer.email || payer.email === "—") { errorCount++; continue; }
+      const emailClean = payer.email.toLowerCase().trim();
+      const member = memberByEmail[emailClean];
+      if (!member) { errorCount++; continue; } // not a registered member
+
+      try {
+        const [cardB64, recuB64] = await Promise.all([
+          getMemberCardBase64(member),
+          getReceiptBase64(member),
+        ]);
+        const sent = await sendMemberCardEmail(member, cardB64, recuB64, true);
+        if (sent) sentCount++; else errorCount++;
+      } catch {
+        errorCount++;
+      }
+    }
+
+    setSendingEmails(false);
+    setSendProgress({ done: 0, total: 0 });
+    toast.success(`✅ ${sentCount} email(s) envoyé(s)${errorCount > 0 ? ` · ${errorCount} échec(s)` : ""}.`);
   };
 
   const onSync = async () => {
@@ -330,8 +432,19 @@ export default function HelloAssoCampaigns() {
       <div className="section-header">
         <div>
           <div className="section-title">Campagnes HelloAsso</div>
-          <div className="section-subtitle">
-            Suivi annuel des adhésions, dons et inscriptions de votre association
+          <div className="section-subtitle" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            Suivi annuel des adhésions, dons et inscriptions
+            {lastImportDate && (
+              <span style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                fontSize: "0.75rem", color: "var(--text-muted)",
+                background: "rgba(99,102,241,0.08)", padding: "2px 8px",
+                borderRadius: 20, border: "1px solid rgba(99,102,241,0.15)"
+              }}>
+                <Clock size={11} />
+                Dernier import : {new Date(lastImportDate).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
           </div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
@@ -714,52 +827,94 @@ export default function HelloAssoCampaigns() {
               )}
             </div>
 
-            <div className="modal-footer" style={{ 
-              padding: "16px 24px", 
-              background: "var(--bg-card)", 
+            <div className="modal-footer" style={{
+              padding: "16px 24px",
+              background: "var(--bg-card)",
               borderTop: "1px solid var(--border)",
               display: "flex",
               flexDirection: "column",
               gap: 10
             }}>
-              {(activeCampaign.formType === "Membership" || 
-                activeCampaign.title.toLowerCase().includes("cotisation") || 
+              {(activeCampaign.formType === "Membership" ||
+                activeCampaign.title.toLowerCase().includes("cotisation") ||
                 activeCampaign.title.toLowerCase().includes("adhésion") ||
                 activeCampaign.title.toLowerCase().includes("membre")) && activePayers.length > 0 && (
-                <button 
-                  style={{ 
-                    width: "100%", 
-                    justifyContent: "center", 
-                    display: "flex", 
-                    alignItems: "center", 
-                    gap: 8,
-                    background: "linear-gradient(135deg, #10b981, #059669)",
-                    color: "white",
-                    border: "none",
-                    borderRadius: 8,
-                    padding: "10px 16px",
-                    fontWeight: 600,
-                    fontSize: "0.85rem",
-                    cursor: "pointer",
-                    transition: "opacity 0.2s"
-                  }} 
-                  onClick={() => handleImportPayersAsMembers(activeCampaign)}
-                  disabled={importingMembers}
-                  onMouseEnter={(e) => e.currentTarget.style.opacity = "0.9"}
-                  onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
-                >
-                  {importingMembers ? (
-                    <>
-                      <div style={{ width: 14, height: 14, border: "2px solid white", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                      Intégration en cours...
-                    </>
-                  ) : (
-                    <>
-                      <UserCheck size={16} />
-                      Intégrer les payeurs comme membres ({activePayers.length})
-                    </>
-                  )}
-                </button>
+                <>
+                  {/* ── Import members button ─────────────────────────── */}
+                  <button
+                    style={{
+                      width: "100%", justifyContent: "center", display: "flex",
+                      alignItems: "center", gap: 8,
+                      background: "linear-gradient(135deg, #10b981, #059669)",
+                      color: "white", border: "none", borderRadius: 8,
+                      padding: "10px 16px", fontWeight: 600, fontSize: "0.85rem",
+                      cursor: importingMembers ? "not-allowed" : "pointer", opacity: importingMembers ? 0.7 : 1,
+                      transition: "opacity 0.2s"
+                    }}
+                    onClick={() => handleImportPayersAsMembers(activeCampaign)}
+                    disabled={importingMembers || sendingEmails}
+                  >
+                    {importingMembers ? (
+                      <><div style={{ width: 14, height: 14, border: "2px solid white", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />Intégration en cours...</>
+                    ) : (
+                      <><UserCheck size={16} />Intégrer les payeurs comme membres ({activePayers.length})</>
+                    )}
+                  </button>
+
+                  {/* ── Send emails to all (with date filter) ─────────── */}
+                  <div style={{
+                    border: "1px solid rgba(99,102,241,0.2)", borderRadius: 10,
+                    padding: "12px 14px", background: "rgba(99,102,241,0.04)",
+                    display: "flex", flexDirection: "column", gap: 8
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", fontWeight: 600, color: "var(--text-heading)" }}>
+                      <Mail size={14} style={{ color: "var(--primary)" }} />
+                      Envoyer carte + reçu
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Filter size={12} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", flexShrink: 0 }}>Seulement après le :</span>
+                      <input
+                        type="date"
+                        value={emailFilterDate}
+                        onChange={e => setEmailFilterDate(e.target.value)}
+                        style={{
+                          flex: 1, background: "var(--bg-body)", border: "1px solid var(--border)",
+                          borderRadius: 6, padding: "4px 8px", color: "var(--text-heading)",
+                          fontSize: "0.78rem", outline: "none"
+                        }}
+                      />
+                      {emailFilterDate && (
+                        <button onClick={() => setEmailFilterDate("")} style={{ background: "transparent", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: "0.75rem", flexShrink: 0 }}>✕</button>
+                      )}
+                    </div>
+                    {sendingEmails && (
+                      <div style={{ fontSize: "0.75rem", color: "var(--primary)", display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ width: 10, height: 10, border: "2px solid var(--primary)", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                        Envoi en cours… {sendProgress.done}/{sendProgress.total}
+                      </div>
+                    )}
+                    <button
+                      style={{
+                        width: "100%", justifyContent: "center", display: "flex",
+                        alignItems: "center", gap: 8,
+                        background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                        color: "white", border: "none", borderRadius: 8,
+                        padding: "9px 16px", fontWeight: 600, fontSize: "0.82rem",
+                        cursor: sendingEmails || importingMembers ? "not-allowed" : "pointer",
+                        opacity: sendingEmails || importingMembers ? 0.6 : 1,
+                      }}
+                      onClick={handleSendEmailsToAll}
+                      disabled={sendingEmails || importingMembers}
+                    >
+                      <Mail size={14} />
+                      {emailFilterDate
+                        ? `Envoyer aux payeurs après le ${new Date(emailFilterDate).toLocaleDateString("fr-FR")}`
+                        : `Envoyer à tous (${activePayers.length})`
+                      }
+                    </button>
+                  </div>
+                </>
               )}
               <button className="btn-primary" style={{ width: "100%" }} onClick={() => setActiveCampaign(null)}>
                 Fermer
